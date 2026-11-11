@@ -1,0 +1,11 @@
+{
+  "name": "prompt-improver",
+  "version": "0.1.0",
+  "description": "An Improve button above the prompt that rewrites your draft into a clearer, more detailed prompt using session context and prompting best practices.",
+  "author": {
+    "name": "thibbdesigns"
+  },
+  "repository": "https://github.com/thibbdesigns/prompt-improver",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

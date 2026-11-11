@@ -1,0 +1,13 @@
+{
+  "name": "prompt-improver",
+  "description": "A button above the Claude Code prompt that rewrites your draft into a clearer, more detailed prompt.",
+  "owner": {
+    "name": "thibbdesigns"
+  },
+  "plugins": [
+    {
+      "name": "prompt-improver",
+      "source": "./"
+    }
+  ]
+}
