@@ -4,8 +4,14 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Phase, QA } from '../types'
 import { buildPrompt, parseReply } from './instructions'
 
-// Model used only when there is no conversation to fork yet (first prompt).
-const FALLBACK_MODEL = 'sonnet'
+// Every rewrite runs on Opus 5.5 at medium effort, whatever model and effort
+// the session itself uses, so a session on a pricier model doesn't spend it here.
+const MODEL = 'claude-opus-5-5'
+const EFFORT = 'medium'
+
+// How much of the conversation (newest last) goes along with the draft.
+const CONTEXT_CHARS = 60_000
+const TOOL_INPUT_CHARS = 300
 
 const IDLE: Phase = { kind: 'idle' }
 const phase = atom({ plugin: 'prompt-improver', key: 'phase' } as const, IDLE, {
@@ -17,6 +23,29 @@ let run = 0
 
 function setPhase($: EngineInterface, next: Phase) {
   return update($, phase, () => next)
+}
+
+/** The session so far as plain text, trimmed to its newest part; null if empty. */
+async function conversationText($: EngineInterface): Promise<string | null> {
+  const messages = await $.session.messages()
+  const lines: string[] = []
+  for (const m of messages) {
+    const who = m.role === 'user' ? 'User' : 'Claude'
+    if (m.text.trim()) {
+      lines.push(`${who}: ${m.text.trim()}`)
+    }
+    for (const use of m.toolUses) {
+      const input = JSON.stringify(use.input)
+      lines.push(
+        `[Claude used ${use.tool}: ${input.length > TOOL_INPUT_CHARS ? `${input.slice(0, TOOL_INPUT_CHARS)}…` : input}]`,
+      )
+    }
+  }
+  const text = lines.join('\n\n')
+  if (!text) {
+    return null
+  }
+  return text.length > CONTEXT_CHARS ? `…${text.slice(-CONTEXT_CHARS)}` : text
 }
 
 /** Asks the model; `qa` null allows clarifying questions. */
@@ -32,14 +61,13 @@ async function improve(
     run: mine,
   })
 
-  let reply = await $.model.fork({ prompt: buildPrompt(original, qa, true) })
-  if (!reply.isAnswered && reply.reason === 'nothing-to-fork') {
-    reply = await $.model.complete({
-      model: FALLBACK_MODEL,
-      prompt: buildPrompt(original, qa, false),
-      maxTokens: 8000,
-    })
-  }
+  const conversation = await conversationText($)
+  const reply = await $.model.complete({
+    model: MODEL,
+    effort: EFFORT,
+    prompt: buildPrompt(original, qa, conversation),
+    maxTokens: 8000,
+  })
 
   if (mine !== run) {
     return // cancelled or superseded
@@ -132,130 +160,142 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    // What other mods draw in the band, kept beside ours so their buttons
+    // stay on screen too.
+    const rest = await next(e)
     if (e.props.hasSurvey) {
-      return next(e)
+      return rest
     }
 
     const current = await read($, phase)
     const { Box, Button, Text, Input } = $.ui.resolve(e)
 
-    switch (current.kind) {
-      case 'idle':
-        // Always shown; pressing it with an empty box shows a hint.
-        return (
-          <Box flexDirection="row" gap={1}>
-            <Button
-              key="improve"
-              label="✨ Improve prompt"
-              onPress={() => inBackground($, start($))}
-            />
-          </Box>
-        )
-
-      case 'working':
-        return (
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>{current.label}</Text>
-            <Button key="cancel" label="Cancel" onPress={() => cancel($)} />
-          </Box>
-        )
-
-      case 'questions': {
-        const proceed = () =>
-          improve(
-            $,
-            current.original,
-            current.questions.map((question, i) => ({
-              question,
-              answer: current.answers[i] ?? '',
-            })),
-          )
-        return (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>A few quick questions to sharpen your prompt</Text>
-            {current.questions.map((question, i) => (
-              <Box key={`q${i}`} flexDirection="column">
-                <Text>{`${i + 1}. ${question}`}</Text>
-                <Input
-                  key={`a${i}`}
-                  placeholder="Your answer (optional)"
-                  value={current.answers[i] ?? ''}
-                  submitLabel={i === current.questions.length - 1 ? 'continue' : 'next'}
-                  onInput={value =>
-                    update($, phase, p =>
-                      p.kind === 'questions'
-                        ? {
-                            ...p,
-                            answers: p.answers.map((a, j) => (j === i ? value : a)),
-                          }
-                        : p,
-                    )
-                  }
-                  onSubmit={() => {
-                    if (i === current.questions.length - 1) {
-                      inBackground($, proceed())
-                    }
-                  }}
-                />
-              </Box>
-            ))}
+    const mine = (() => {
+      switch (current.kind) {
+        case 'idle':
+          // Always shown; pressing it with an empty box shows a hint.
+          return (
             <Box flexDirection="row" gap={1}>
               <Button
-                key="continue"
-                label="Continue"
-                variant="primary"
-                onPress={() => inBackground($, proceed())}
+                key="improve"
+                label="✨ Improve prompt"
+                onPress={() => inBackground($, start($))}
               />
-              <Button
-                key="skip"
-                label="Skip questions"
-                onPress={() => inBackground($, improve($, current.original, []))}
-              />
+            </Box>
+          )
+
+        case 'working':
+          return (
+            <Box flexDirection="row" gap={1}>
+              <Text dimColor>{current.label}</Text>
               <Button key="cancel" label="Cancel" onPress={() => cancel($)} />
             </Box>
-          </Box>
-        )
-      }
+          )
 
-      case 'preview':
-        return (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Improved prompt</Text>
-            <Box borderStyle="round" paddingX={1} flexDirection="column">
-              <Text>{current.improved}</Text>
+        case 'questions': {
+          const proceed = () =>
+            improve(
+              $,
+              current.original,
+              current.questions.map((question, i) => ({
+                question,
+                answer: current.answers[i] ?? '',
+              })),
+            )
+          return (
+            <Box flexDirection="column" gap={1}>
+              <Text bold>A few quick questions to sharpen your prompt</Text>
+              {current.questions.map((question, i) => (
+                <Box key={`q${i}`} flexDirection="column">
+                  <Text>{`${i + 1}. ${question}`}</Text>
+                  <Input
+                    key={`a${i}`}
+                    placeholder="Your answer (optional)"
+                    value={current.answers[i] ?? ''}
+                    submitLabel={i === current.questions.length - 1 ? 'continue' : 'next'}
+                    onInput={value =>
+                      update($, phase, p =>
+                        p.kind === 'questions'
+                          ? {
+                              ...p,
+                              answers: p.answers.map((a, j) => (j === i ? value : a)),
+                            }
+                          : p,
+                      )
+                    }
+                    onSubmit={() => {
+                      if (i === current.questions.length - 1) {
+                        inBackground($, proceed())
+                      }
+                    }}
+                  />
+                </Box>
+              ))}
+              <Box flexDirection="row" gap={1}>
+                <Button
+                  key="continue"
+                  label="Continue"
+                  variant="primary"
+                  onPress={() => inBackground($, proceed())}
+                />
+                <Button
+                  key="skip"
+                  label="Skip questions"
+                  onPress={() => inBackground($, improve($, current.original, []))}
+                />
+                <Button key="cancel" label="Cancel" onPress={() => cancel($)} />
+              </Box>
             </Box>
-            {current.changes ? (
-              <Text dimColor>{`What changed: ${current.changes}`}</Text>
-            ) : null}
+          )
+        }
+
+        case 'preview':
+          return (
+            <Box flexDirection="column" gap={1}>
+              <Text bold>Improved prompt</Text>
+              <Box borderStyle="round" paddingX={1} flexDirection="column">
+                <Text>{current.improved}</Text>
+              </Box>
+              {current.changes ? (
+                <Text dimColor>{`What changed: ${current.changes}`}</Text>
+              ) : null}
+              <Box flexDirection="row" gap={1}>
+                <Button
+                  key="accept"
+                  label="Accept"
+                  variant="primary"
+                  onPress={press => accept($, current.improved, press.surface)}
+                />
+                <Button
+                  key="retry"
+                  label="Retry"
+                  onPress={() => inBackground($, improve($, current.original, current.qa))}
+                />
+                <Button key="discard" label="Discard" onPress={() => cancel($)} />
+              </Box>
+            </Box>
+          )
+
+        case 'error':
+          return (
             <Box flexDirection="row" gap={1}>
+              <Text color="red">{current.message}</Text>
               <Button
-                key="accept"
-                label="Accept"
-                variant="primary"
-                onPress={press => accept($, current.improved, press.surface)}
+                key="again"
+                label="Try again"
+                onPress={() => inBackground($, improve($, current.original, null))}
               />
-              <Button
-                key="retry"
-                label="Retry"
-                onPress={() => inBackground($, improve($, current.original, current.qa))}
-              />
-              <Button key="discard" label="Discard" onPress={() => cancel($)} />
+              <Button key="dismiss" label="Dismiss" onPress={() => cancel($)} />
             </Box>
-          </Box>
-        )
+          )
+      }
+    })()
 
-      case 'error':
-        return (
-          <Box flexDirection="row" gap={1}>
-            <Text color="red">{current.message}</Text>
-            <Button
-              key="again"
-              label="Try again"
-              onPress={() => inBackground($, improve($, current.original, null))}
-            />
-            <Button key="dismiss" label="Dismiss" onPress={() => cancel($)} />
-          </Box>
-        )
-    }
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Box flexGrow={1}>{mine}</Box>
+        {rest}
+      </Box>
+    )
   })
 }

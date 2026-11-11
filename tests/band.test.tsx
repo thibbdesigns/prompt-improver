@@ -19,8 +19,17 @@ const IMPROVED =
 
 test('Improve → preview → Accept fills the prompt box, on every surface', async ($, on) => {
   const filled: string[] = []
+  const asked: { model: string; effort: unknown; prompt: string }[] = []
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'users get logged out after the session times out', toolUses: [] },
+      { role: 'assistant', text: 'The refresh logic lives in src/auth/token.ts.', toolUses: [] },
+    ],
+  }))
   on('prompt.read', () => ({ value: { text: 'fix the login bug', cursor: 17 } }))
-  on('model.fork', () => ({
+  on('model.complete', (_, e) => {
+    asked.push({ model: e.model, effort: e.effort, prompt: e.prompt })
+    return {
     value: {
       isAnswered: true,
       text: `<improved_prompt>\n${IMPROVED}\n</improved_prompt>\n<changes>named src/auth/, added a test check</changes>`,
@@ -31,7 +40,8 @@ test('Improve → preview → Accept fills the prompt box, on every surface', as
         cache_read_input_tokens: 0,
       },
     },
-  }))
+    }
+  })
   on('prompt.fill', (_, e) => {
     filled.push(e.text)
     return { isFilled: true }
@@ -49,14 +59,18 @@ test('Improve → preview → Accept fills the prompt box, on every surface', as
 
     await ui.press({ key: 'accept' })
     expect(filled).toEqual([IMPROVED])
+    expect(asked.at(-1)?.model).toBe('claude-opus-5-5')
+    expect(asked.at(-1)?.effort).toBe('medium')
+    expect(asked.at(-1)?.prompt).toContain('Claude: The refresh logic lives in src/auth/token.ts.')
     await ui.unmount()
   }
 })
 
 test('clarifying questions are asked, then folded into the rewrite', async ($, on) => {
   const prompts: string[] = []
+  on('session.messages', () => ({ value: [] }))
   on('prompt.read', () => ({ value: { text: 'add a widget', cursor: 12 } }))
-  on('model.fork', (_, e) => {
+  on('model.complete', (_, e) => {
     prompts.push(e.prompt)
     const usage = {
       input_tokens: 1,
@@ -88,9 +102,9 @@ test('clarifying questions are asked, then folded into the rewrite', async ($, o
 test('with an empty box the button still shows, and pressing it calls no model', async ($, on) => {
   let modelCalls = 0
   on('prompt.read', () => ({ value: { text: '   ', cursor: 0 } }))
-  on('model.fork', () => {
+  on('model.complete', () => {
     modelCalls += 1
-    return { value: { isAnswered: false, reason: 'nothing-to-fork' } }
+    return { value: { isAnswered: false, reason: 'empty-reply' } }
   })
 
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -98,6 +112,21 @@ test('with an empty box the button still shows, and pressing it calls no model',
     await ui.press({ key: 'improve' })
     expect(modelCalls).toBe(0)
     expect(await ui.find({ type: 'Button', key: 'improve' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test("another mod's part of the band stays beside the Improve button", async ($, on) => {
+  // Stands for whatever is beneath this mod in the band (another mod's button).
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>other mod</Text>
+  })
+
+  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'improve' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /other mod/ }))?.text).toBe('other mod')
     await ui.unmount()
   }
 })

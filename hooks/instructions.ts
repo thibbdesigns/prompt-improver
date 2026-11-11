@@ -43,14 +43,15 @@ The full rewritten prompt, ready to send as-is.
 /**
  * The one message sent to the model. `qa` is null on the first pass (questions
  * allowed), else the answers so far (an empty list when the person skipped).
+ * `conversation` is the session so far as plain text, or null when there is none.
  */
 export function buildPrompt(
   draft: string,
   qa: QA[] | null,
-  hasConversation: boolean,
+  conversation: string | null,
 ): string {
-  const role = hasConversation
-    ? `For this one reply, act as a prompt editor rather than as the assistant doing the work. The person has drafted their next message to you in this session and wants it rewritten into a clearer, more detailed prompt before they send it. You have no tools for this reply: answer straight away from what you already know of this conversation, without starting the task itself.`
+  const role = conversation
+    ? `Act as a prompt editor. Someone is working with Claude, an AI coding assistant, in a Claude Code session, and has drafted their next message. They want it rewritten into a clearer, more detailed prompt before they send it. The conversation so far is below, so you can name the files, errors and decisions it mentions. Don't start the task itself.\n\n<conversation>\n${conversation}\n</conversation>`
     : `Act as a prompt editor. Someone has drafted a message to Claude, an AI coding assistant working in their project, and wants it rewritten into a clearer, more detailed prompt before they send it. You can't see their project or conversation, so don't guess at specifics like file names: ask about them or mark them as an assumption.`
 
   const answered =
