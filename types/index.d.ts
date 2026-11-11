@@ -22,6 +22,6 @@ export type Phase =
 
 declare module 'claude-code' {
   interface PluginState {
-    'prompt-improver': { phase: Phase; hasDraft: boolean }
+    'prompt-improver': { phase: Phase }
   }
 }

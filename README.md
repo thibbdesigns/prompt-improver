@@ -4,7 +4,7 @@ A Claude Code mod that puts a **✨ Improve prompt** button above the prompt box
 
 ## How it works
 
-1. Type a prompt. The button shows up whenever the box has text and Claude isn't busy.
+1. Type a prompt. The button sits above the prompt box at all times.
 2. Click **✨ Improve prompt**. The mod sends your draft, along with the current conversation, to your session's model at your session's effort level. That way it can name the files, errors and decisions you've already discussed. On the first prompt of a session there's no conversation yet, so it uses Sonnet with the draft alone.
 3. If your draft is missing something only you know, like which of two things you mean or what result you expect, you get up to 3 short questions. Answer them and press **Continue**, or press **Skip questions**.
 4. A preview shows the improved prompt, with a one-line note on what changed. **Accept** replaces your draft, **Retry** rewrites it again, and **Discard** keeps your original. Your draft only changes when you press Accept.

@@ -19,7 +19,6 @@ const IMPROVED =
 
 test('Improve → preview → Accept fills the prompt box, on every surface', async ($, on) => {
   const filled: string[] = []
-  on('prompt.change', (_, e) => ({ text: e.text }))
   on('prompt.read', () => ({ value: { text: 'fix the login bug', cursor: 17 } }))
   on('model.fork', () => ({
     value: {
@@ -40,15 +39,9 @@ test('Improve → preview → Accept fills the prompt box, on every surface', as
 
   for (const surface of ['terminal', 'desktop'] as const) {
     filled.length = 0
-    await $.prompt.change({ text: '', cursor: 0, origin: { kind: 'clear' } })
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ type: 'Button', key: 'improve' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'improve' })).toBeDefined()
 
-    await $.prompt.change({
-      text: 'fix the login bug',
-      cursor: 17,
-      origin: { kind: 'engine' },
-    })
     await ui.press({ key: 'improve' })
 
     expect((await ui.find({ type: 'Text', text: /session timeout/ }))?.text).toBe(IMPROVED)
@@ -62,7 +55,6 @@ test('Improve → preview → Accept fills the prompt box, on every surface', as
 
 test('clarifying questions are asked, then folded into the rewrite', async ($, on) => {
   const prompts: string[] = []
-  on('prompt.change', (_, e) => ({ text: e.text }))
   on('prompt.read', () => ({ value: { text: 'add a widget', cursor: 12 } }))
   on('model.fork', (_, e) => {
     prompts.push(e.prompt)
@@ -80,7 +72,6 @@ test('clarifying questions are asked, then folded into the rewrite', async ($, o
     }
   })
 
-  await $.prompt.change({ text: 'add a widget', cursor: 12, origin: { kind: 'engine' } })
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   await ui.press({ key: 'improve' })
 
@@ -92,4 +83,21 @@ test('clarifying questions are asked, then folded into the rewrite', async ($, o
   expect(prompts[1]).not.toContain('<questions>\n<q>First question')
   expect(await ui.find({ type: 'Text', text: /Build the calendar widget/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('with an empty box the button still shows, and pressing it calls no model', async ($, on) => {
+  let modelCalls = 0
+  on('prompt.read', () => ({ value: { text: '   ', cursor: 0 } }))
+  on('model.fork', () => {
+    modelCalls += 1
+    return { value: { isAnswered: false, reason: 'nothing-to-fork' } }
+  })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface, props: { ...BAND.props, isWorking: true } })
+    await ui.press({ key: 'improve' })
+    expect(modelCalls).toBe(0)
+    expect(await ui.find({ type: 'Button', key: 'improve' })).toBeDefined()
+    await ui.unmount()
+  }
 })

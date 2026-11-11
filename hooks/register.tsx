@@ -11,22 +11,12 @@ const IDLE: Phase = { kind: 'idle' }
 const phase = atom({ plugin: 'prompt-improver', key: 'phase' } as const, IDLE, {
   shape: 'phase-1',
 })
-const hasDraft = atom({ plugin: 'prompt-improver', key: 'hasDraft' } as const, false)
 
 // Bumped on every start and cancel, so a stale reply is ignored.
 let run = 0
-let lastHasDraft: boolean | undefined
 
 function setPhase($: EngineInterface, next: Phase) {
   return update($, phase, () => next)
-}
-
-async function noteDraft($: EngineInterface, text: string) {
-  const has = text.trim().length > 0
-  if (has !== lastHasDraft) {
-    lastHasDraft = has
-    await update($, hasDraft, () => has)
-  }
 }
 
 /** Asks the model; `qa` null allows clarifying questions. */
@@ -132,26 +122,6 @@ function inBackground($: EngineInterface, work: Promise<void>) {
 }
 
 export const register: Register = on => {
-  on('session.start', async ($, e, next) => {
-    const result = await next(e)
-    const { text } = await $.prompt.read()
-    await noteDraft($, text)
-    return result
-  })
-
-  // Track whether the box holds a draft, so the button shows only then.
-  on('prompt.edit', async ($, e, next) => {
-    const box = await next(e)
-    await noteDraft($, box.text)
-    return box
-  })
-
-  on('prompt.change', async ($, e, next) => {
-    const result = await next(e)
-    await noteDraft($, e.text)
-    return result
-  })
-
   // Sending a prompt ends any improvement in progress.
   on('prompt.submit', ($, e, next) => {
     run += 1
@@ -170,10 +140,8 @@ export const register: Register = on => {
     const { Box, Button, Text, Input } = $.ui.resolve(e)
 
     switch (current.kind) {
-      case 'idle': {
-        if (e.props.isWorking || !(await read($, hasDraft))) {
-          return next(e)
-        }
+      case 'idle':
+        // Always shown; pressing it with an empty box shows a hint.
         return (
           <Box flexDirection="row" gap={1}>
             <Button
@@ -183,7 +151,6 @@ export const register: Register = on => {
             />
           </Box>
         )
-      }
 
       case 'working':
         return (
